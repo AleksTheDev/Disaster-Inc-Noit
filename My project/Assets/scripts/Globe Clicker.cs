@@ -27,6 +27,6 @@ public class GlobeClicker : MonoBehaviour
         if (lookup == null) return;
 
         Country country = lookup.GetCountryAtLatLng(lat, lng);
-        InfoPanel.Show(country, lat, lng);
+        InfoPanel.Show(country);
     }
 }

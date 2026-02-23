@@ -6,16 +6,12 @@ public class CountryInfoPanel : MonoBehaviour
     public GameObject Panel;
     public Text CountryNameText;
     public Text PopulationText;
-    public Text CoordinatesText;
-    public Button CloseButton;
-
     void Start()
     {
         Panel.SetActive(false);
-        CloseButton.onClick.AddListener(() => Panel.SetActive(false));
     }
 
-    public void Show(Country country, float lat, float lng)
+    public void Show(Country country)
     {
         Panel.SetActive(true);
 
@@ -29,7 +25,5 @@ public class CountryInfoPanel : MonoBehaviour
             CountryNameText.text = "Unknown";
             PopulationText.text = "No data available";
         }
-
-        CoordinatesText.text = $"Lat: {lat:F1}°  Lng: {lng:F1}°";
     }
 }
