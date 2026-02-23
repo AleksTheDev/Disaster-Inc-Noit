@@ -1,14 +1,16 @@
 using UnityEngine;
+using TMPro;
 using UnityEngine.UI;
 
 public class CountryInfoPanel : MonoBehaviour
 {
     public GameObject Panel;
-    public Text CountryNameText;
-    public Text PopulationText;
+    public TextMeshProUGUI CountryNameText;
+    public TextMeshProUGUI PopulationText;
+
     void Start()
     {
-        Panel.SetActive(false);
+        Panel.SetActive(false); 
     }
 
     public void Show(Country country)
