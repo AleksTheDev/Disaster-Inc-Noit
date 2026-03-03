@@ -26,14 +26,22 @@ public class CountrySelector : MonoBehaviour
         {
             if (hit.transform == earthTransform || hit.transform.IsChildOf(earthTransform))
             {
-                Vector3 localHit = earthTransform.InverseTransformPoint(hit.point);
-                string countryName = bordersRenderer.FindClosestCountry(localHit);
+                Vector3 centerToHit = hit.point - earthTransform.position;
 
-                if (countryName != null)
+                GameObject bordersParent = GameObject.Find("BordersParent");
+                if (bordersParent != null)
                 {
-                    bordersRenderer.SelectCountry(countryName);
-                    if (countryNameText != null)
-                        countryNameText.text = countryName;
+                    Vector3 localHit = bordersParent.transform.InverseTransformDirection(centerToHit).normalized * bordersRenderer.globeRadius;
+                    string countryName = bordersRenderer.FindClosestCountry(localHit);
+
+                    if (countryName != null)
+                    {
+                        bordersRenderer.SelectCountry(countryName);
+
+                        if (countryNameText != null)
+                            countryNameText.text = countryName;
+                        DisasterSystem.Instance?.OnCountryClicked(countryName);
+                    }
                 }
             }
         }

@@ -29,7 +29,7 @@ public class BordersRenderer : MonoBehaviour
     public Material selectedMaterial;
     public Transform earthTransform;
 
-    private GameObject bordersParent;
+    public GameObject bordersParent;
 
     private List<(List<Vector2> coords, LineRenderer lr, string countryName)> borders =
         new List<(List<Vector2>, LineRenderer, string)>();
@@ -127,7 +127,7 @@ public class BordersRenderer : MonoBehaviour
 
     public string FindClosestCountry(Vector3 localPoint)
     {
-        float lat = Mathf.Asin(localPoint.y / globeRadius) * Mathf.Rad2Deg;
+        float lat = Mathf.Asin(Mathf.Clamp(localPoint.y / globeRadius, -1f, 1f)) * Mathf.Rad2Deg;
         float lon = Mathf.Atan2(localPoint.x, localPoint.z) * Mathf.Rad2Deg;
 
         lon -= longitudeOffset;
@@ -141,7 +141,16 @@ public class BordersRenderer : MonoBehaviour
         {
             foreach (var coord in border.coords)
             {
-                float dist = Vector2.Distance(new Vector2(lon, lat), coord);
+                // Haversine distance - точно сферично разстояние
+                float dLat = (coord.y - lat) * Mathf.Deg2Rad;
+                float dLon = (coord.x - lon) * Mathf.Deg2Rad;
+
+                float a = Mathf.Sin(dLat / 2) * Mathf.Sin(dLat / 2) +
+                          Mathf.Cos(lat * Mathf.Deg2Rad) * Mathf.Cos(coord.y * Mathf.Deg2Rad) *
+                          Mathf.Sin(dLon / 2) * Mathf.Sin(dLon / 2);
+
+                float dist = 2 * Mathf.Atan2(Mathf.Sqrt(a), Mathf.Sqrt(1 - a));
+
                 if (dist < bestDist)
                 {
                     bestDist = dist;
@@ -183,6 +192,18 @@ public class BordersRenderer : MonoBehaviour
         float z = radiusXZ * Mathf.Cos(lonRad);
 
         return new Vector3(x, y, z);
+    }
+    public Vector3 GeoToSpherePublic(float lon, float lat)
+    {
+        return GeoToSphere(lon, lat);
+    }
+
+    public List<(List<Vector2> coords, string countryName)> GetBorderData()
+    {
+        var result = new List<(List<Vector2>, string)>();
+        foreach (var b in borders)
+            result.Add((b.coords, b.countryName));
+        return result;
     }
 
     public void SetLongitudeOffset(float value) { longitudeOffset = value; UpdateBorders(); }
