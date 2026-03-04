@@ -1,8 +1,7 @@
 using UnityEngine;
-using System.Collections;
 using System.Collections.Generic;
-using UnityEngine.UI;
 using TMPro;
+using System.Collections;
 
 public enum DisasterType { Earthquake, Landslide, Volcano }
 
@@ -17,6 +16,7 @@ public class ActiveDisaster
     public GameObject pinObject;
     public bool isResolved;
 }
+
 
 public class DisasterSystem : MonoBehaviour
 {
@@ -41,18 +41,16 @@ public class DisasterSystem : MonoBehaviour
     [Header("UI")]
     public TextMeshProUGUI casualtiesText;
     public TextMeshProUGUI fundsText;
-    public GameObject disasterPanel;
     public TextMeshProUGUI disasterNameText;
-    public Transform pinParent;
 
     public List<ActiveDisaster> activeDisasters = new List<ActiveDisaster>();
-    private ActiveDisaster selectedDisaster;
+    public ActiveDisaster selectedDisaster;
+
     private int totalCasualties = 0;
     private float funds = 160000f;
-    private float spawnTimer;
+    private float spawnTimer = 0f;
     private float nextSpawnTime;
 
-    // Country lon/lat cache
     private Dictionary<string, Vector2> countryCenters = new Dictionary<string, Vector2>();
 
     void Awake()
@@ -64,10 +62,20 @@ public class DisasterSystem : MonoBehaviour
     void Start()
     {
         nextSpawnTime = Random.Range(minSpawnInterval, maxSpawnInterval);
-        spawnTimer = 0f;
-
-        BuildCountryCenters();
         UpdateUI();
+        StartCoroutine(InitAfterBorders());
+    }
+
+    IEnumerator InitAfterBorders()
+    {
+        // Изчакай един frame за да се зареди BordersRenderer
+        yield return new WaitForSeconds(1f);
+        BuildCountryCenters();
+        Debug.Log($"Built centers for {countryCenters.Count} countries");
+    
+        // Test spawns
+        SpawnRandomDisaster();
+        SpawnRandomDisaster();
     }
 
     void Update()
@@ -87,22 +95,6 @@ public class DisasterSystem : MonoBehaviour
 
     void BuildCountryCenters()
     {
-        // Calculate center point for each country from border coords
-        foreach (var kvp in bordersRenderer.countries)
-        {
-            float lonSum = 0, latSum = 0;
-            int count = 0;
-
-            foreach (var lr in kvp.Value.lineRenderers)
-            {
-                // Use positions already on globe
-            }
-
-            // Use first polygon center from borders
-            countryCenters[kvp.Key] = Vector2.zero;
-        }
-
-        // Better: parse centers directly from border data
         var borders = bordersRenderer.GetBorderData();
         Dictionary<string, (float lonSum, float latSum, int count)> sums =
             new Dictionary<string, (float, float, int)>();
@@ -129,6 +121,8 @@ public class DisasterSystem : MonoBehaviour
                 kvp.Value.latSum / kvp.Value.count
             );
         }
+
+        Debug.Log($"Built centers for {countryCenters.Count} countries");
     }
 
     void SpawnRandomDisaster()
@@ -150,19 +144,28 @@ public class DisasterSystem : MonoBehaviour
             isResolved = false
         };
 
-        // Create pin
         disaster.pinObject = CreatePin(randomCountry, type);
         activeDisasters.Add(disaster);
 
-        Debug.Log($"Disaster spawned: {type} in {randomCountry}");
+        Debug.Log($"Spawned {type} in {randomCountry}");
     }
 
     GameObject CreatePin(string countryName, DisasterType type)
     {
-        if (!countryCenters.ContainsKey(countryName)) return null;
+        if (!countryCenters.ContainsKey(countryName))
+        {
+            Debug.LogWarning($"No center found for {countryName}");
+            return null;
+        }
+
+        Vector2 center = countryCenters[countryName];
+        Vector3 localPos = bordersRenderer.GeoToSpherePublic(center.x, center.y);
+        Vector3 worldPos = earthTransform.TransformPoint(localPos * 1.05f);
 
         GameObject pin = new GameObject("Pin_" + countryName);
-        pin.transform.parent = pinParent != null ? pinParent : earthTransform;
+        pin.transform.position = worldPos;
+        pin.transform.parent = earthTransform;
+        pin.transform.localScale = Vector3.one * 2f;
 
         SpriteRenderer sr = pin.AddComponent<SpriteRenderer>();
         sr.sprite = type switch
@@ -172,24 +175,23 @@ public class DisasterSystem : MonoBehaviour
             DisasterType.Volcano => volcanoSprite,
             _ => earthquakeSprite
         };
-        sr.sortingOrder = 10;
+        sr.sortingOrder = 100;
+        sr.sortingLayerName = "Default";
 
-        Vector2 center = countryCenters[countryName];
-        pin.transform.localPosition = bordersRenderer.GeoToSpherePublic(center.x, center.y) * 1.05f;
-        pin.transform.localScale = Vector3.one * 0.3f;
+        pin.AddComponent<PinBillboard>().mainCamera = mainCamera;
 
         return pin;
     }
-
     void UpdatePinPositions()
     {
         foreach (var disaster in activeDisasters)
         {
-            if (disaster.pinObject == null) continue;
+            if (disaster.pinObject == null || !countryCenters.ContainsKey(disaster.countryName))
+                continue;
 
-            // Make pin face camera
-            disaster.pinObject.transform.LookAt(mainCamera.transform);
-            disaster.pinObject.transform.Rotate(0, 180f, 0);
+            Vector2 center = countryCenters[disaster.countryName];
+            Vector3 localPos = bordersRenderer.GeoToSpherePublic(center.x, center.y);
+            disaster.pinObject.transform.position = earthTransform.TransformPoint(localPos * 1.05f);
         }
     }
 
@@ -206,12 +208,12 @@ public class DisasterSystem : MonoBehaviour
             }
 
             disaster.timeRemaining -= Time.deltaTime;
-            disaster.casualties += Mathf.RoundToInt(disaster.casualtiesPerSecond * Time.deltaTime);
-            totalCasualties += Mathf.RoundToInt(disaster.casualtiesPerSecond * Time.deltaTime);
+            int newCasualties = Mathf.RoundToInt(disaster.casualtiesPerSecond * Time.deltaTime);
+            disaster.casualties += newCasualties;
+            totalCasualties += newCasualties;
 
             if (disaster.timeRemaining <= 0)
             {
-                // Time ran out - disaster unresolved
                 ResolveDisaster(disaster, false);
                 toRemove.Add(disaster);
             }
@@ -223,49 +225,40 @@ public class DisasterSystem : MonoBehaviour
 
     public void OnCountryClicked(string countryName)
     {
-        // Find active disaster in this country
         ActiveDisaster disaster = activeDisasters.Find(d => d.countryName == countryName);
 
         if (disaster != null)
         {
             selectedDisaster = disaster;
-            ShowDisasterPanel(disaster);
+            if (disasterNameText != null)
+                disasterNameText.text = $"{disaster.type} - {disaster.countryName}";
         }
         else
         {
-            HideDisasterPanel();
+            selectedDisaster = null;
+            if (disasterNameText != null)
+                disasterNameText.text = "";
         }
     }
 
-    void ShowDisasterPanel(ActiveDisaster disaster)
-    {
-        if (disasterPanel == null) return;
-        disasterPanel.SetActive(true);
-
-        if (disasterNameText != null)
-            disasterNameText.text = $"{disaster.type} - {disaster.countryName}";
-    }
-
-    void HideDisasterPanel()
-    {
-        if (disasterPanel != null)
-            disasterPanel.SetActive(false);
-        selectedDisaster = null;
-    }
-    
     public void ApplyMeasure(float effectiveness)
     {
-        if (selectedDisaster == null) return;
+        if (selectedDisaster == null)
+        {
+            Debug.Log("Няма избрано бедствие!");
+            return;
+        }
 
-        ResolveDisaster(selectedDisaster, true);
-        selectedDisaster.isResolved = true;
-        
         float timeBonus = selectedDisaster.timeRemaining / selectedDisaster.totalTime;
         float reward = 50000f * effectiveness * (1f + timeBonus);
         funds += reward;
 
-        HideDisasterPanel();
-        Debug.Log($"Disaster resolved! Reward: {reward:F0}");
+        ResolveDisaster(selectedDisaster, true);
+        selectedDisaster.isResolved = true;
+        selectedDisaster = null;
+
+        if (disasterNameText != null)
+            disasterNameText.text = "";
     }
 
     void ResolveDisaster(ActiveDisaster disaster, bool success)
@@ -273,10 +266,9 @@ public class DisasterSystem : MonoBehaviour
         if (disaster.pinObject != null)
             Destroy(disaster.pinObject);
 
-        if (success)
-            Debug.Log($"Successfully resolved {disaster.type} in {disaster.countryName}");
-        else
-            Debug.Log($"Failed to resolve {disaster.type} in {disaster.countryName}! Casualties: {disaster.casualties}");
+        Debug.Log(success
+            ? $"Resolved {disaster.type} in {disaster.countryName}! Reward earned."
+            : $"Failed {disaster.type} in {disaster.countryName}! Casualties: {disaster.casualties}");
     }
 
     void UpdateUI()
@@ -286,9 +278,7 @@ public class DisasterSystem : MonoBehaviour
 
         if (fundsText != null)
             fundsText.text = $"${funds:N0}";
-
-        // Update selected disaster panel
-        if (selectedDisaster != null && !selectedDisaster.isResolved)
-            ShowDisasterPanel(selectedDisaster);
     }
+
+
 }
