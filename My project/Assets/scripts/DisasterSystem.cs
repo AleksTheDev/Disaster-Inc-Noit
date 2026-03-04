@@ -1,7 +1,7 @@
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
-using System.Collections;
 
 public enum DisasterType { Earthquake, Landslide, Volcano }
 
@@ -16,7 +16,6 @@ public class ActiveDisaster
     public GameObject pinObject;
     public bool isResolved;
 }
-
 
 public class DisasterSystem : MonoBehaviour
 {
@@ -68,12 +67,9 @@ public class DisasterSystem : MonoBehaviour
 
     IEnumerator InitAfterBorders()
     {
-        // Изчакай един frame за да се зареди BordersRenderer
         yield return new WaitForSeconds(1f);
         BuildCountryCenters();
         Debug.Log($"Built centers for {countryCenters.Count} countries");
-    
-        // Test spawns
         SpawnRandomDisaster();
         SpawnRandomDisaster();
     }
@@ -89,7 +85,6 @@ public class DisasterSystem : MonoBehaviour
         }
 
         UpdateDisasters();
-        UpdatePinPositions();
         UpdateUI();
     }
 
@@ -121,8 +116,6 @@ public class DisasterSystem : MonoBehaviour
                 kvp.Value.latSum / kvp.Value.count
             );
         }
-
-        Debug.Log($"Built centers for {countryCenters.Count} countries");
     }
 
     void SpawnRandomDisaster()
@@ -165,7 +158,7 @@ public class DisasterSystem : MonoBehaviour
         GameObject pin = new GameObject("Pin_" + countryName);
         pin.transform.position = worldPos;
         pin.transform.parent = earthTransform;
-        pin.transform.localScale = Vector3.one * 2f;
+        pin.transform.localScale = Vector3.one * 0.3f;
 
         SpriteRenderer sr = pin.AddComponent<SpriteRenderer>();
         sr.sprite = type switch
@@ -178,21 +171,12 @@ public class DisasterSystem : MonoBehaviour
         sr.sortingOrder = 100;
         sr.sortingLayerName = "Default";
 
-        pin.AddComponent<PinBillboard>().mainCamera = mainCamera;
+        PinBillboard billboard = pin.AddComponent<PinBillboard>();
+        billboard.mainCamera = mainCamera;
+        billboard.earthTransform = earthTransform;
+        billboard.pinDistance = bordersRenderer.globeRadius + 0.1f;
 
         return pin;
-    }
-    void UpdatePinPositions()
-    {
-        foreach (var disaster in activeDisasters)
-        {
-            if (disaster.pinObject == null || !countryCenters.ContainsKey(disaster.countryName))
-                continue;
-
-            Vector2 center = countryCenters[disaster.countryName];
-            Vector3 localPos = bordersRenderer.GeoToSpherePublic(center.x, center.y);
-            disaster.pinObject.transform.position = earthTransform.TransformPoint(localPos * 1.05f);
-        }
     }
 
     void UpdateDisasters()
@@ -267,7 +251,7 @@ public class DisasterSystem : MonoBehaviour
             Destroy(disaster.pinObject);
 
         Debug.Log(success
-            ? $"Resolved {disaster.type} in {disaster.countryName}! Reward earned."
+            ? $"Resolved {disaster.type} in {disaster.countryName}!"
             : $"Failed {disaster.type} in {disaster.countryName}! Casualties: {disaster.casualties}");
     }
 
@@ -279,6 +263,4 @@ public class DisasterSystem : MonoBehaviour
         if (fundsText != null)
             fundsText.text = $"${funds:N0}";
     }
-
-
 }
