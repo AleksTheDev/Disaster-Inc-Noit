@@ -29,6 +29,9 @@ public class MeasureButton : MonoBehaviour
     void Start()
     {
         button = GetComponent<Button>();
+        if (button != null)
+            button.onClick.AddListener(OnClick);
+
         if (cooldownOverlay != null)
             cooldownOverlay.fillAmount = 0f;
     }
@@ -61,7 +64,6 @@ public class MeasureButton : MonoBehaviour
         if (onCooldown) return;
         if (DisasterSystem.Instance == null) return;
 
-        // Seismic Monitor не изисква избрано бедствие
         if (actionType != MeasureAction.SeismicMonitor &&
             DisasterSystem.Instance.selectedDisaster == null)
         {
