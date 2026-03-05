@@ -1,5 +1,4 @@
 using UnityEngine;
-using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 
@@ -32,25 +31,42 @@ public class DisasterSystem : MonoBehaviour
     public float disasterDuration = 30f;
     public int baseCasualtiesPerSecond = 100;
 
-    [Header("Pin Prefabs")]
+    [Header("Win Condition")]
+    public int disastersToWin = 10;
+    public GameObject winPanel;
+
+    [Header("Pin Sprites")]
     public Sprite earthquakeSprite;
     public Sprite landslideSprite;
     public Sprite volcanoSprite;
 
+    [Header("Infrastructure Sprites")]
+    public Sprite lavaBarrierSprite;
+    public Sprite landslideBarrierSprite;
+    public Sprite reinforcedBuildingSprite;
+    public Sprite seismicMonitorSprite;
+    public Sprite nextEarthquakeSprite;
+
     [Header("UI")]
     public TextMeshProUGUI casualtiesText;
-    public TextMeshProUGUI fundsText;
     public TextMeshProUGUI disasterNameText;
+    public TextMeshProUGUI disastersSolvedText;
 
     public List<ActiveDisaster> activeDisasters = new List<ActiveDisaster>();
     public ActiveDisaster selectedDisaster;
 
     private int totalCasualties = 0;
-    private float funds = 160000f;
+    private int disastersSolved = 0;
     private float spawnTimer = 0f;
     private float nextSpawnTime;
 
-    private Dictionary<string, Vector2> countryCenters = new Dictionary<string, Vector2>();
+    // Infrastructure tracking
+    private Dictionary<string, List<GameObject>> infrastructurePins =
+        new Dictionary<string, List<GameObject>>();
+
+    // Seismic monitor prediction
+    private string predictedEarthquakeCountry = null;
+    private GameObject predictionPin = null;
 
     void Awake()
     {
@@ -61,22 +77,14 @@ public class DisasterSystem : MonoBehaviour
     void Start()
     {
         nextSpawnTime = Random.Range(minSpawnInterval, maxSpawnInterval);
+        if (winPanel != null) winPanel.SetActive(false);
         UpdateUI();
-        StartCoroutine(InitAfterBorders());
-    }
-
-    IEnumerator InitAfterBorders()
-    {
-        yield return new WaitForSeconds(1f);
-        BuildCountryCenters();
-        Debug.Log($"Built centers for {countryCenters.Count} countries");
-        SpawnRandomDisaster();
-        SpawnRandomDisaster();
     }
 
     void Update()
     {
         spawnTimer += Time.deltaTime;
+
         if (spawnTimer >= nextSpawnTime)
         {
             spawnTimer = 0f;
@@ -88,43 +96,39 @@ public class DisasterSystem : MonoBehaviour
         UpdateUI();
     }
 
-    void BuildCountryCenters()
-    {
-        var borders = bordersRenderer.GetBorderData();
-        Dictionary<string, (float lonSum, float latSum, int count)> sums =
-            new Dictionary<string, (float, float, int)>();
-
-        foreach (var border in borders)
-        {
-            if (!sums.ContainsKey(border.countryName))
-                sums[border.countryName] = (0, 0, 0);
-
-            var s = sums[border.countryName];
-            foreach (var coord in border.coords)
-            {
-                s.lonSum += coord.x;
-                s.latSum += coord.y;
-                s.count++;
-            }
-            sums[border.countryName] = s;
-        }
-
-        foreach (var kvp in sums)
-        {
-            countryCenters[kvp.Key] = new Vector2(
-                kvp.Value.lonSum / kvp.Value.count,
-                kvp.Value.latSum / kvp.Value.count
-            );
-        }
-    }
-
     void SpawnRandomDisaster()
     {
         var countryList = new List<string>(bordersRenderer.countries.Keys);
         if (countryList.Count == 0) return;
 
-        string randomCountry = countryList[Random.Range(0, countryList.Count)];
-        DisasterType type = (DisasterType)Random.Range(0, 3);
+        // If seismic monitor is active, spawn earthquake in predicted country
+        string randomCountry;
+        DisasterType type;
+
+        if (predictedEarthquakeCountry != null)
+        {
+            randomCountry = predictedEarthquakeCountry;
+            type = DisasterType.Earthquake;
+            predictedEarthquakeCountry = null;
+            if (predictionPin != null)
+            {
+                Destroy(predictionPin);
+                predictionPin = null;
+            }
+        }
+        else
+        {
+            randomCountry = countryList[Random.Range(0, countryList.Count)];
+            type = (DisasterType)Random.Range(0, 3);
+        }
+
+        if (!bordersRenderer.TryGetCountryCenter(randomCountry, out Vector2 center))
+            return;
+
+        // Reduce casualties if infrastructure exists
+        int casualties = baseCasualtiesPerSecond;
+        if (infrastructurePins.ContainsKey(randomCountry))
+            casualties = Mathf.RoundToInt(casualties * 0.3f);
 
         ActiveDisaster disaster = new ActiveDisaster
         {
@@ -133,35 +137,29 @@ public class DisasterSystem : MonoBehaviour
             timeRemaining = disasterDuration,
             totalTime = disasterDuration,
             casualties = 0,
-            casualtiesPerSecond = baseCasualtiesPerSecond,
+            casualtiesPerSecond = casualties,
             isResolved = false
         };
 
         disaster.pinObject = CreatePin(randomCountry, type);
         activeDisasters.Add(disaster);
-
-        Debug.Log($"Spawned {type} in {randomCountry}");
     }
 
-    GameObject CreatePin(string countryName, DisasterType type)
+    GameObject CreatePin(string countryName, DisasterType type, Sprite overrideSprite = null)
     {
-        if (!countryCenters.ContainsKey(countryName))
-        {
-            Debug.LogWarning($"No center found for {countryName}");
+        if (!bordersRenderer.TryGetCountryCenter(countryName, out Vector2 center))
             return null;
-        }
 
-        Vector2 center = countryCenters[countryName];
         Vector3 localPos = bordersRenderer.GeoToSpherePublic(center.x, center.y);
         Vector3 worldPos = earthTransform.TransformPoint(localPos * 1.05f);
 
         GameObject pin = new GameObject("Pin_" + countryName);
         pin.transform.position = worldPos;
         pin.transform.parent = earthTransform;
-        pin.transform.localScale = Vector3.one * 0.3f;
+        pin.transform.localScale = Vector3.one * 0.05f;
 
         SpriteRenderer sr = pin.AddComponent<SpriteRenderer>();
-        sr.sprite = type switch
+        sr.sprite = overrideSprite ?? type switch
         {
             DisasterType.Earthquake => earthquakeSprite,
             DisasterType.Landslide => landslideSprite,
@@ -169,7 +167,6 @@ public class DisasterSystem : MonoBehaviour
             _ => earthquakeSprite
         };
         sr.sortingOrder = 100;
-        sr.sortingLayerName = "Default";
 
         PinBillboard billboard = pin.AddComponent<PinBillboard>();
         billboard.mainCamera = mainCamera;
@@ -177,6 +174,35 @@ public class DisasterSystem : MonoBehaviour
         billboard.pinDistance = bordersRenderer.globeRadius + 0.1f;
 
         return pin;
+    }
+
+    void AddInfrastructurePin(string countryName, Sprite sprite)
+    {
+        if (!bordersRenderer.TryGetCountryCenter(countryName, out Vector2 center))
+            return;
+
+        Vector3 localPos = bordersRenderer.GeoToSpherePublic(center.x, center.y);
+        // Offset slightly so pins don't overlap
+        Vector3 worldPos = earthTransform.TransformPoint(localPos * 1.06f);
+
+        GameObject pin = new GameObject("Infra_" + countryName);
+        pin.transform.position = worldPos;
+        pin.transform.parent = earthTransform;
+        pin.transform.localScale = Vector3.one * 0.04f;
+
+        SpriteRenderer sr = pin.AddComponent<SpriteRenderer>();
+        sr.sprite = sprite;
+        sr.sortingOrder = 110;
+
+        PinBillboard billboard = pin.AddComponent<PinBillboard>();
+        billboard.mainCamera = mainCamera;
+        billboard.earthTransform = earthTransform;
+        billboard.pinDistance = bordersRenderer.globeRadius + 0.15f;
+
+        if (!infrastructurePins.ContainsKey(countryName))
+            infrastructurePins[countryName] = new List<GameObject>();
+
+        infrastructurePins[countryName].Add(pin);
     }
 
     void UpdateDisasters()
@@ -198,7 +224,7 @@ public class DisasterSystem : MonoBehaviour
 
             if (disaster.timeRemaining <= 0)
             {
-                ResolveDisaster(disaster, false);
+                ResolveDisaster(disaster);
                 toRemove.Add(disaster);
             }
         }
@@ -225,34 +251,120 @@ public class DisasterSystem : MonoBehaviour
         }
     }
 
-    public void ApplyMeasure(float effectiveness)
+    // 1. ЕВАКУАЦИЯ - работи за всички бедствия
+    public void Evacuate()
     {
-        if (selectedDisaster == null)
-        {
-            Debug.Log("Няма избрано бедствие!");
-            return;
-        }
+        if (selectedDisaster == null) { Debug.Log("Няма избрано бедствие!"); return; }
 
-        float timeBonus = selectedDisaster.timeRemaining / selectedDisaster.totalTime;
-        float reward = 50000f * effectiveness * (1f + timeBonus);
-        funds += reward;
-
-        ResolveDisaster(selectedDisaster, true);
+        ResolveDisaster(selectedDisaster);
         selectedDisaster.isResolved = true;
         selectedDisaster = null;
 
-        if (disasterNameText != null)
-            disasterNameText.text = "";
+        disastersSolved++;
+        CheckWinCondition();
+
+        if (disasterNameText != null) disasterNameText.text = "";
     }
 
-    void ResolveDisaster(ActiveDisaster disaster, bool success)
+    // 2. ЛАВА БАРИЕРИ - само за вулкани, оставя постоянна иконка
+    public void BuildLavaBarrier()
+    {
+        if (selectedDisaster == null) { Debug.Log("Няма избрано бедствие!"); return; }
+        if (selectedDisaster.type != DisasterType.Volcano)
+        {
+            Debug.Log("Лава бариерите работят само за вулкани!");
+            return;
+        }
+
+        AddInfrastructurePin(selectedDisaster.countryName, lavaBarrierSprite);
+        ResolveDisaster(selectedDisaster);
+        selectedDisaster.isResolved = true;
+        selectedDisaster = null;
+
+        disastersSolved++;
+        CheckWinCondition();
+
+        if (disasterNameText != null) disasterNameText.text = "";
+    }
+
+    // 3. БАРИЕРИ ОТ СВЛАЧИЩА - само за свлачища, оставя постоянна иконка
+    public void BuildLandslideBarrier()
+    {
+        if (selectedDisaster == null) { Debug.Log("Няма избрано бедствие!"); return; }
+        if (selectedDisaster.type != DisasterType.Landslide)
+        {
+            Debug.Log("Бариерите работят само за свлачища!");
+            return;
+        }
+
+        AddInfrastructurePin(selectedDisaster.countryName, landslideBarrierSprite);
+        ResolveDisaster(selectedDisaster);
+        selectedDisaster.isResolved = true;
+        selectedDisaster = null;
+
+        disastersSolved++;
+        CheckWinCondition();
+
+        if (disasterNameText != null) disasterNameText.text = "";
+    }
+
+    // 4. УКРЕПВАНЕ НА СГРАДИ - само за земетресения, оставя постоянна иконка
+    public void ReinforceBuildings()
+    {
+        if (selectedDisaster == null) { Debug.Log("Няма избрано бедствие!"); return; }
+        if (selectedDisaster.type != DisasterType.Earthquake)
+        {
+            Debug.Log("Укрепването работи само за земетресения!");
+            return;
+        }
+
+        AddInfrastructurePin(selectedDisaster.countryName, reinforcedBuildingSprite);
+        ResolveDisaster(selectedDisaster);
+        selectedDisaster.isResolved = true;
+        selectedDisaster = null;
+
+        disastersSolved++;
+        CheckWinCondition();
+
+        if (disasterNameText != null) disasterNameText.text = "";
+    }
+
+    // 5. ТЕКТОНСКИ МОНИТОРИНГ - предсказва следващото земетресение
+    public void SeismicMonitor()
+    {
+        var countryList = new List<string>(bordersRenderer.countries.Keys);
+        if (countryList.Count == 0) return;
+
+        // Pick random country for next earthquake
+        predictedEarthquakeCountry = countryList[Random.Range(0, countryList.Count)];
+
+        // Remove old prediction pin
+        if (predictionPin != null) Destroy(predictionPin);
+
+        // Show prediction pin
+        predictionPin = CreatePin(predictedEarthquakeCountry,
+            DisasterType.Earthquake, seismicMonitorSprite);
+
+        Debug.Log($"Следващо земетресение: {predictedEarthquakeCountry}");
+
+        if (disasterNameText != null)
+            disasterNameText.text = $"Предсказано: {predictedEarthquakeCountry}";
+    }
+
+    void CheckWinCondition()
+    {
+        if (disastersSolved >= disastersToWin)
+        {
+            Debug.Log("ПОБЕДА!");
+            if (winPanel != null) winPanel.SetActive(true);
+            Time.timeScale = 0f;
+        }
+    }
+
+    void ResolveDisaster(ActiveDisaster disaster)
     {
         if (disaster.pinObject != null)
             Destroy(disaster.pinObject);
-
-        Debug.Log(success
-            ? $"Resolved {disaster.type} in {disaster.countryName}!"
-            : $"Failed {disaster.type} in {disaster.countryName}! Casualties: {disaster.casualties}");
     }
 
     void UpdateUI()
@@ -260,7 +372,12 @@ public class DisasterSystem : MonoBehaviour
         if (casualtiesText != null)
             casualtiesText.text = $"{totalCasualties:N0}";
 
-        if (fundsText != null)
-            fundsText.text = $"${funds:N0}";
+        if (disastersSolvedText != null)
+            disastersSolvedText.text = $"{disastersSolved}/{disastersToWin}";
+    }
+
+    public void ApplyMeasure(float effectiveness)
+    {
+        Evacuate();
     }
 }

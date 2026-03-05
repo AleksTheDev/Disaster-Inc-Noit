@@ -43,7 +43,7 @@ public class CountrySelector : MonoBehaviour
                         DisasterSystem.Instance?.OnCountryClicked(countryName);
                     }
                 }
-            }
+            } 
         }
     }
 }

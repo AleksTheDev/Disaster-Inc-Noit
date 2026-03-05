@@ -37,6 +37,8 @@ public class BordersRenderer : MonoBehaviour
     public Dictionary<string, CountryData> countries = new Dictionary<string, CountryData>();
     public CountryData selectedCountry;
 
+    private Dictionary<string, Vector2> countryCenters = new Dictionary<string, Vector2>();
+
     void Start()
     {
         bordersParent = new GameObject("BordersParent");
@@ -51,7 +53,6 @@ public class BordersRenderer : MonoBehaviour
         string coordPattern = @"\[\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\]";
         string ringPattern = @"\[\s*\[\s*-?\d+\.?\d*\s*,\s*-?\d+\.?\d*\s*\][\s\S]*?\]\s*\]";
 
-        // Split JSON into per-country blocks by "name" field
         string[] countryBlocks = Regex.Split(jsonFile.text, @"(?=""name"")");
 
         foreach (string block in countryBlocks)
@@ -97,7 +98,44 @@ public class BordersRenderer : MonoBehaviour
             }
         }
 
+        BuildCountryCenters();
         UpdateBorders();
+    }
+
+    void BuildCountryCenters()
+    {
+        Dictionary<string, (float lonSum, float latSum, int count)> sums =
+            new Dictionary<string, (float, float, int)>();
+
+        foreach (var border in borders)
+        {
+            if (!sums.ContainsKey(border.countryName))
+                sums[border.countryName] = (0, 0, 0);
+
+            var s = sums[border.countryName];
+            foreach (var coord in border.coords)
+            {
+                s.lonSum += coord.x;
+                s.latSum += coord.y;
+                s.count++;
+            }
+            sums[border.countryName] = s;
+        }
+
+        foreach (var kvp in sums)
+        {
+            if (kvp.Value.count < 50) continue;
+
+            countryCenters[kvp.Key] = new Vector2(
+                kvp.Value.lonSum / kvp.Value.count,
+                kvp.Value.latSum / kvp.Value.count
+            );
+        }
+    }
+
+    public bool TryGetCountryCenter(string country, out Vector2 center)
+    {
+        return countryCenters.TryGetValue(country, out center);
     }
 
     void Update()
@@ -113,15 +151,21 @@ public class BordersRenderer : MonoBehaviour
     {
         if (selectedCountry != null)
             foreach (var lr in selectedCountry.lineRenderers)
+            {
                 lr.material = lineMaterial;
+                lr.startWidth = 0.05f;
+                lr.endWidth = 0.05f;
+            }
 
         if (countries.TryGetValue(name, out CountryData country))
         {
             selectedCountry = country;
             foreach (var lr in country.lineRenderers)
+            {
                 lr.material = selectedMaterial;
-
-            Debug.Log($"Selected: {name}");
+                lr.startWidth = 0.08f;
+                lr.endWidth = 0.08f;
+            }
         }
     }
 
@@ -137,25 +181,24 @@ public class BordersRenderer : MonoBehaviour
         string bestCountry = null;
         float bestDist = float.MaxValue;
 
-        foreach (var border in borders)
+        foreach (var kvp in countryCenters)
         {
-            foreach (var coord in border.coords)
+            float centerLon = kvp.Value.x;
+            float centerLat = kvp.Value.y;
+
+            float dLat = (centerLat - lat) * Mathf.Deg2Rad;
+            float dLon = (centerLon - lon) * Mathf.Deg2Rad;
+
+            float a = Mathf.Sin(dLat / 2) * Mathf.Sin(dLat / 2) +
+                      Mathf.Cos(lat * Mathf.Deg2Rad) * Mathf.Cos(centerLat * Mathf.Deg2Rad) *
+                      Mathf.Sin(dLon / 2) * Mathf.Sin(dLon / 2);
+
+            float dist = 2 * Mathf.Atan2(Mathf.Sqrt(a), Mathf.Sqrt(1 - a));
+
+            if (dist < bestDist)
             {
-                // Haversine distance - точно сферично разстояние
-                float dLat = (coord.y - lat) * Mathf.Deg2Rad;
-                float dLon = (coord.x - lon) * Mathf.Deg2Rad;
-
-                float a = Mathf.Sin(dLat / 2) * Mathf.Sin(dLat / 2) +
-                          Mathf.Cos(lat * Mathf.Deg2Rad) * Mathf.Cos(coord.y * Mathf.Deg2Rad) *
-                          Mathf.Sin(dLon / 2) * Mathf.Sin(dLon / 2);
-
-                float dist = 2 * Mathf.Atan2(Mathf.Sqrt(a), Mathf.Sqrt(1 - a));
-
-                if (dist < bestDist)
-                {
-                    bestDist = dist;
-                    bestCountry = border.countryName;
-                }
+                bestDist = dist;
+                bestCountry = kvp.Key;
             }
         }
 
@@ -193,17 +236,10 @@ public class BordersRenderer : MonoBehaviour
 
         return new Vector3(x, y, z);
     }
+
     public Vector3 GeoToSpherePublic(float lon, float lat)
     {
         return GeoToSphere(lon, lat);
-    }
-
-    public List<(List<Vector2> coords, string countryName)> GetBorderData()
-    {
-        var result = new List<(List<Vector2>, string)>();
-        foreach (var b in borders)
-            result.Add((b.coords, b.countryName));
-        return result;
     }
 
     public void SetLongitudeOffset(float value) { longitudeOffset = value; UpdateBorders(); }
